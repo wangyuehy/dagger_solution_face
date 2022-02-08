@@ -24,6 +24,8 @@ from utils.plot_utils import get_color_table, plot_one_box
 from model.yolov3 import yolov3
 from model.yolov3_tiny import yolov3_tiny
 from facenet_infer import facenet_process
+from face_landmark_lt_infer import pfld_infer_process, read_img_input, Coordinate_landmarks_map, align_face
+from common import parse_csv_get_feas_list, face_recognition
 from common import numpy_extractor_info
 
 config = lt.get_default_config(hw_cfg=hardware_configs_pb2.DAGGER,graph_type=graph_types_pb2.TFSavedModel)
@@ -47,8 +49,10 @@ def preprocess_input(anchor_path, class_name_path, input_image):
     img = img[np.newaxis, :] / 255.
     return img, anchors, classes, num_class, height_ori, width_ori, img_ori, color_table
 
-def infer_process(light_graph=None, calibration_data=None, config=config):
-    outputs = lt.run_functional_simulation(light_graph, calibration_data, config)
+def infer_process(light_graph, input_data, input_name, config):
+    named_tensor = lt.data.named_tensor.NamedTensorSet([input_name], [input_data])
+    batch_input = lt.data.batch.batch_inputs(named_tensor, batch_size)
+    outputs = lt.run_functional_simulation(light_graph, batch_input, config)
     feature_map1 = []
     feature_map2 = []
     for inf_out in outputs.batches:
@@ -65,8 +69,12 @@ if __name__ == '__main__':
     face_regist_path  = './facedata_test'
     yolov3_lt_graph_path = './lt_graph_pb/yolov3_tiny_lgf_end.pb' 
     facenet_lt_graph_path = './lt_graph_pb/facenet_lgf_end.pb'
+    pfld_lt_graph_path = './lt_graph_pb/pfld_lgf_end2.pb'
+
     yolov3_lt_graph = lt.import_graph(yolov3_lt_graph_path, config)
     facenet_lt_graph = lt.import_graph(facenet_lt_graph_path, config)
+    pfld_lt_graph = lt.import_graph(pfld_lt_graph_path, config)
+
     anchor_path = 'data/yolov3_tiny_widerface_anchors.txt'
     class_name_path = 'data/widerface.names'
     face_features_list = []
@@ -79,11 +87,12 @@ if __name__ == '__main__':
             image_path = os.path.join(os.path.join(face_regist_path, name), j)
             input_image = image_path
             img_input, anchors, classes, num_class, height_ori, width_ori, img_ori, color_table = preprocess_input(anchor_path, class_name_path, input_image)
-            np.save("test.npy", img_input)
-            npy_file_name = 'test.npy'
+            # np.save("test.npy", img_input)
+            # npy_file_name = 'test.npy'
             
-            calibration_data = get_calibration_data(calibration_data_file_path=npy_file_name, input_edge_name=input_name)
-            outs = infer_process(light_graph=yolov3_lt_graph, calibration_data=calibration_data, config=config)
+            # calibration_data = get_calibration_data(calibration_data_file_path=npy_file_name, input_edge_name=input_name)
+            # outs = infer_process(light_graph=yolov3_lt_graph, calibration_data=calibration_data, config=config)
+            outs= infer_process(yolov3_lt_graph, img_input, input_name, config)
             feature_map1 = outs[0][0]
             feature_map2 = outs[1][0]
             print("feature_map1 type = ", type(feature_map1))
@@ -114,11 +123,20 @@ if __name__ == '__main__':
                 x0, y0, x1, y1 = boxes_[i]
                 face_crop = img_ori[int(y0):int(y1), int(x0):int(x1)]
                 face_crop = cv2.resize(face_crop, image_shape)
-                features, _ = facenet_process(facenet_lt_graph, face_crop, config, image_shape)
+                ########### face landmark detection start ###########
+                input_pfld = read_img_input(face_crop, 112, 112)
+                pfld_outs = pfld_infer_process(pfld_lt_graph, input_pfld, config)
+                landmarks = pfld_outs[0][0]
+                theatas = pfld_outs[1][0]
+                ########### face landmark detection end #############
+                rotated_img, eye_center, angle, rotated_landmarks = align_face(face_crop, landmarks, img_ori, boxes_[i])  # face align
+                cv2.imwrite("rotated_img.jpg", rotated_img)
+                rotated_input = cv2.resize(rotated_img, image_shape)
+                features, _ = facenet_process(facenet_lt_graph, rotated_input, config, image_shape)
+                
                 face_name = name
                 fea_map = numpy_extractor_info(features[0])
                 face_features_list.append(tuple([face_name, fea_map]))
-
                 plot_one_box(img_ori, [x0, y0, x1, y1], label=classes[labels_[i]], color=color_table[labels_[i]])
             cv2.imwrite('detection_result.jpg', img_ori)
             # print("face_features_list = ", face_features_list)

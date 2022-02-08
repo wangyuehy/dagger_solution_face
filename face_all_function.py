@@ -46,8 +46,10 @@ def preprocess_input(anchor_path, class_name_path, input_image):
     img = img[np.newaxis, :] / 255.
     return img, anchors, classes, num_class, height_ori, width_ori, img_ori, color_table
 
-def infer_process(light_graph=None, calibration_data=None, config=config):
-    outputs = lt.run_functional_simulation(light_graph, calibration_data, config)
+def infer_process(light_graph, input_data, input_name, config):
+    named_tensor = lt.data.named_tensor.NamedTensorSet([input_name], [input_data])
+    batch_input = lt.data.batch.batch_inputs(named_tensor, batch_size)
+    outputs = lt.run_functional_simulation(light_graph, batch_input, config)
     feature_map1 = []
     feature_map2 = []
     for inf_out in outputs.batches:
@@ -71,16 +73,15 @@ if __name__ == '__main__':
     yolov3_lt_graph = lt.import_graph(yolov3_lt_graph_path, config)
     facenet_lt_graph = lt.import_graph(facenet_lt_graph_path, config)
 
-    image_path = "./facedata_test/YangHuang/DSC08216.jpg"
+    image_path = "./facedata_test/JuanLiu/DSC04113.jpg"
     anchor_path = 'data/yolov3_tiny_widerface_anchors.txt'
     class_name_path = 'data/widerface.names'
     input_image = image_path
     img_input, anchors, classes, num_class, height_ori, width_ori, img_ori, color_table = preprocess_input(anchor_path, class_name_path, input_image)
-    np.save("test.npy", img_input)
-    npy_file_name = 'test.npy'
-    
-    calibration_data = get_calibration_data(calibration_data_file_path=npy_file_name, input_edge_name=input_name)
-    outs= infer_process(light_graph=yolov3_lt_graph, calibration_data=calibration_data, config=config)
+    # np.save("test.npy", img_input)
+    # npy_file_name = 'test.npy'
+    # calibration_data = get_calibration_data(calibration_data_file_path=npy_file_name, input_edge_name=input_name)
+    outs = infer_process(yolov3_lt_graph, img_input, input_name, config)
     feature_map1 = outs[0][0]
     feature_map2 = outs[1][0]
     print("feature_map1 type = ", type(feature_map1))
@@ -111,22 +112,28 @@ if __name__ == '__main__':
     for i in range(len(boxes_)):
         x0, y0, x1, y1 = boxes_[i]
         face_crop = img_ori[int(y0):int(y1), int(x0):int(x1)]
+        cv2.imwrite("src_img.jpg", face_crop)
         ########### face landmark detection start ###########
         input_pfld = read_img_input(face_crop, 112, 112)
         pfld_outs = pfld_infer_process(pfld_lt_graph, input_pfld, config)
         landmarks = pfld_outs[0][0]
         theatas = pfld_outs[1][0]
-        landmarks_map = Coordinate_landmarks_map(landmarks, boxes_[i])
-        for p in range(int(landmarks_map.shape[1]/2)):
-            cv2.circle(img_ori, (int(landmarks_map[0][p*2+0]), int(landmarks_map[0][p*2+1])), 2, (0, 0, 255), -1)
         ########### face landmark detection end #############
-        rotated_img, eye_center, angle = align_face(face_crop, landmarks)
-        rotated_img = cv2.resize(rotated_img, image_shape)
-        features, _ = facenet_process(facenet_lt_graph, rotated_img, config, image_shape)
+        rotated_img, eye_center, angle, rotated_landmarks = align_face(face_crop, landmarks, img_ori, boxes_[i])  # face alignment
+        cv2.imwrite("rotated_img.jpg", rotated_img)
+        rotated_input = cv2.resize(rotated_img, image_shape)
+        features, _ = facenet_process(facenet_lt_graph, rotated_input, config, image_shape)
         fea_map = features[0].tolist()[0]
         name = face_recognition(fea_map, feas_map_list)
         if name == None:
             name = 'Unkown'
         print("name = ", name)
+        landmark_map_res = Coordinate_landmarks_map(landmarks, boxes_[i])
+        ############ draw landmark ######################
+        for p in range(int(landmark_map_res.shape[1]/2)):
+            cv2.circle(img_ori, (int(landmark_map_res[0][p*2+0]), int(landmark_map_res[0][p*2+1])), 2, (0, 0, 255), -1)
+        ############ draw landmark end ##################
         plot_one_box(img_ori, [x0, y0, x1, y1], label=name+' '+classes[labels_[i]], color=color_table[labels_[i]])
     cv2.imwrite('detection_result.jpg', img_ori)
+
+    
