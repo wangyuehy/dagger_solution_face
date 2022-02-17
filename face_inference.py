@@ -83,6 +83,10 @@ def face_inference_all_process(det_graph_path, fet_graph_path, ldmk_graph_path, 
     return boxes_, scores_, labels_, face_features, face_landmarks, names
 
 def test_face_recognition(input_image):
+    """
+    input: image name
+    output: bboxes, scores, labels, face features, face landmarks, names
+    """
     features_csv_path = 'face_features_lib.csv'
     yolov3_lt_graph_path = './lt_graph_pb/yolov3_tiny_lgf_end.pb' 
     facenet_lt_graph_path = './lt_graph_pb/facenet_lgf_end.pb'
